@@ -56,6 +56,7 @@
       user-select: none;
       z-index: 30;
       pointer-events: none; /* 让点击穿透tip，确保能点到body触发音乐 */
+      transition: opacity 0.5s;
     }
 
     #audioToggle{
@@ -71,6 +72,22 @@
       user-select: none;
       cursor: pointer;
       z-index: 30;
+    }
+
+    /* 遮罩层：用于点击信纸外部关闭信纸 */
+    #mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 9;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.6s ease;
+      backdrop-filter: blur(2px);
+    }
+    #mask.show {
+      opacity: 1;
+      pointer-events: auto;
     }
 
     /* 信纸（高度用 dvh，支持内部滚动） */
@@ -103,6 +120,7 @@
       transform: translate(-50%, -50%) scale(0.9) scaleY(0.05);
       opacity: 0;
       transition: transform 1.4s ease, opacity 1.0s ease;
+      pointer-events: none;
     }
 
     #paper::before,
@@ -134,18 +152,26 @@
       font-size: 34px;
       opacity: 0;
       transform: translateX(0) translateY(0) scale(1);
-      transition: opacity .6s ease;
+      /* 统一使用 transition 控制位置移动，实现平滑飞行动画 */
+      transition: left 2.5s ease-in-out, top 2.5s ease-in-out, opacity 1s ease, transform 2.5s ease-in-out;
       pointer-events: none;
       z-index: 20;
     }
-    #dove.fly{
+    
+    /* 信鸽停留状态：飞到右上角 */
+    #dove.rest {
+      left: 85vw;  /* 屏幕右侧 */
+      top: 8vh;    /* 屏幕上方 */
       opacity: 1;
-      animation: flyAway 3.6s ease-in forwards;
+      transform: scale(1.3) rotate(10deg);
+      cursor: pointer;
+      pointer-events: auto; /* 允许点击 */
+      animation: hoverDove 3s ease-in-out infinite alternate;
     }
-    @keyframes flyAway{
-      0%   { transform: translateX(0) translateY(0) scale(1); }
-      40%  { transform: translateX(45vw) translateY(-6vh) scale(1.05); }
-      100% { transform: translateX(130vw) translateY(-20vh) scale(1.15); opacity: 0; }
+
+    @keyframes hoverDove {
+      0% { transform: scale(1.3) rotate(10deg) translateY(0); }
+      100% { transform: scale(1.3) rotate(10deg) translateY(-10px); }
     }
   </style>
 </head>
@@ -156,16 +182,12 @@
   <div id="audioToggle">🎵 音乐：关</div>
   <div id="tip">👇 点击屏幕开始放烟花</div>
 
+  <!-- 增加遮罩层 -->
+  <div id="mask"></div>
+
   <div id="paper"><div id="letterContent"></div></div>
   <div id="dove">🕊️</div>
 
-  <!-- 
-       修改说明：
-       1. 之前的 src 链接是 Pixabay 的网页链接，不是音频文件链接。
-       2. 我替换成了一个直链 mp3。
-       3. 如果要在 GitHub 部署，建议将你下载好的 mp3 文件放在项目根目录，
-          然后把 src 改为 "./your-music-name.mp3" 这样最稳。
-  -->
   <audio id="bgm" loop preload="auto">
     <source src="./bgm.mp3" type="audio/mpeg">
   </audio>
@@ -176,6 +198,7 @@
       const ctx = canvas.getContext('2d', { alpha: true });
       const tip = document.getElementById('tip');
       const paper = document.getElementById('paper');
+      const mask = document.getElementById('mask');
       const letterContent = document.getElementById('letterContent');
       const dove = document.getElementById('dove');
       const bgm = document.getElementById('bgm');
@@ -185,7 +208,6 @@
       let W = 0, H = 0, DPR = 1;
 
       function getViewportSize() {
-        // 微信/移动端更稳：优先 visualViewport
         const vv = window.visualViewport;
         const w = Math.max(1, Math.round(vv ? vv.width : window.innerWidth));
         const h = Math.max(1, Math.round(vv ? vv.height : window.innerHeight));
@@ -194,24 +216,20 @@
 
       function resize(force = false) {
         const { w, h } = getViewportSize();
-        const dpr = Math.min(3, window.devicePixelRatio || 1); // 限制最高 DPR，避免过重
+        const dpr = Math.min(3, window.devicePixelRatio || 1); 
         if (!force && w === W && h === H && dpr === DPR) return;
 
         W = w; H = h; DPR = dpr;
 
-        // CSS 像素尺寸（关键：避免微信把页面“聚焦到左上角”）
         canvas.style.width = W + 'px';
         canvas.style.height = H + 'px';
 
-        // 真实像素尺寸（用于清晰渲染）
         canvas.width = Math.round(W * DPR);
         canvas.height = Math.round(H * DPR);
 
-        // 关键：每次都重置 transform，避免 ctx.scale 叠加
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
       }
 
-      // 初始 + 监听（含微信/移动端常见触发点）
       resize(true);
       window.addEventListener('resize', () => resize(false), { passive: true });
       window.addEventListener('orientationchange', () => setTimeout(() => resize(true), 50), { passive: true });
@@ -220,27 +238,23 @@
         window.visualViewport.addEventListener('scroll', () => resize(false), { passive: true });
       }
 
-      // ✅ 修复：允许在信纸区域内正常滚动
+      // ✅ 允许在信纸区域内正常滚动
       document.addEventListener('touchmove', (e) => {
         const target = e.target;
         if (target && target.closest && target.closest('#paper')) {
-          // 在信纸内，不拦截，允许上下滑动
           return;
         }
-        // 其它区域仍然禁止页面被拖动
         e.preventDefault();
       }, { passive: false });
 
-      // ======= 🎵 音乐控制逻辑 (核心修改) =======
+      // ======= 🎵 音乐控制逻辑 =======
       let audioOn = false;
 
-      // 1. 尝试播放音频的封装函数
       function tryPlayAudio() {
         if (!audioOn && bgm.paused) {
           bgm.play().then(() => {
             audioOn = true;
             audioToggle.textContent = "🎵 音乐：开";
-            // 播放成功后，移除全局的一次性监听，避免浪费性能
             document.removeEventListener('click', tryPlayAudio);
             document.removeEventListener('touchstart', tryPlayAudio);
           }).catch((e) => {
@@ -249,18 +263,11 @@
         }
       }
 
-      // 2. 微信专用：WeixinJSBridgeReady 事件
-      document.addEventListener('WeixinJSBridgeReady', function() {
-        tryPlayAudio();
-      }, false);
-
-      // 3. 用户首次点击/触摸屏幕时，立刻尝试播放 (最稳的方案)
-      document.addEventListener('click', tryPlayAudio, { once: false }); // 保留几次直到成功
+      document.addEventListener('WeixinJSBridgeReady', function() { tryPlayAudio(); }, false);
+      document.addEventListener('click', tryPlayAudio, { once: false });
       document.addEventListener('touchstart', tryPlayAudio, { once: false });
 
-      // 4. 手动开关按钮
       audioToggle.addEventListener('click', (e) => {
-        // 阻止冒泡，避免触发 body 的点击事件导致逻辑冲突（虽然这里没太大影响）
         e.stopPropagation();
         if (audioOn) {
           bgm.pause();
@@ -281,7 +288,7 @@
 
       // ======= 祝福逐字 =======
       const fullBlessingRaw = "祝世界上最最最可爱，最最最温柔，最最最好的妹妹新年快乐，万事如意，身体健康，高考顺利！";
-      const blessingChars = [...fullBlessingRaw]; // 修复：逐字拆分
+      const blessingChars = [...fullBlessingRaw];
       let blessingIndex = 0;
       let blessingShown = "";
       let blessingVisible = true;
@@ -492,36 +499,88 @@
         stage = STAGE.LETTER;
         paper.classList.add('show');
         tip.style.opacity = 0;
-        typeWriter(letterContent, letterText, 80, 140).then(()=>{
-          setTimeout(startStage4, 2000);
+        
+        // 修改1：调整打字速度，放慢 3 倍左右 (原 80, 140 -> 现 250, 450)
+        typeWriter(letterContent, letterText, 250, 450).then(()=>{
+          setTimeout(startStage4, 2500);
         });
       }
 
-      // ======= 阶段4：收拢 → 信鸽 → 循环 =======
+      // ======= 阶段4：收拢 → 信鸽停留 → 循环交互 =======
       function startStage4(){
-        paper.classList.add('fold');
+        paper.classList.add('fold'); // 收起信纸
+        
+        // 延时让信纸收起动画播放一会，然后显示信鸽
         setTimeout(()=>{
-          dove.classList.add('fly');
+          paper.classList.remove('show'); // 确保隐藏
+          // 修改2：信鸽飞向右上角并停留 (.rest)
+          dove.classList.add('rest');
+          
           launchFirework(W/2, H*0.28, 1.5, ()=>{
             nyeTextAlpha = 1;
             nyeFading = true;
             nyeStartTime = performance.now() - 1500;
           });
-        }, 500);
+        }, 800);
 
         setTimeout(()=>{
           stage = STAGE.LOOP;
           tip.style.opacity = 1;
-          tip.textContent = "🎆 点击继续放烟花";
+          tip.innerHTML = "🕊️ 点击信鸽看信<br>🎆 点击屏幕放烟花";
           startAutoLoop();
-        }, 3800);
+        }, 3000);
       }
+
+      // ======= 交互逻辑：信鸽与信纸切换 =======
+      
+      // 点击信鸽 -> 展开信纸
+      dove.addEventListener('click', (e) => {
+        e.stopPropagation(); // 阻止冒泡，防止触发烟花
+        if(stage === STAGE.LOOP) {
+          showLetter();
+        }
+      });
+
+      // 点击遮罩 -> 收起信纸
+      mask.addEventListener('click', (e) => {
+        e.stopPropagation();
+        hideLetter();
+      });
+
+      function showLetter() {
+        // 隐藏信鸽
+        dove.classList.remove('rest');
+        dove.style.opacity = 0; // 临时隐藏
+        
+        // 显示信纸
+        paper.classList.remove('fold');
+        paper.classList.add('show');
+        mask.classList.add('show');
+        
+        tip.style.opacity = 0; // 看信时隐藏提示
+      }
+
+      function hideLetter() {
+        // 收起信纸
+        paper.classList.add('fold');
+        paper.classList.remove('show');
+        mask.classList.remove('show');
+        
+        // 显示信鸽
+        dove.style.opacity = 1;
+        dove.classList.add('rest');
+        
+        tip.style.opacity = 1; // 恢复提示
+      }
+
 
       let autoLoopTimer=null;
       function startAutoLoop(){
         if(autoLoopTimer) clearInterval(autoLoopTimer);
         autoLoopTimer = setInterval(()=>{
           if(stage!==STAGE.LOOP) return;
+          // 如果信纸打开中，减少自动烟花频率或停止，避免干扰阅读? 
+          // 保持原有逻辑：继续放烟花做背景
           launchFirework();
         }, rand(5000,8000));
       }
@@ -536,6 +595,9 @@
         const p = e.touches ? e.touches[0] : e;
         const x = p.clientX;
         const y = p.clientY;
+
+        // 检查点击目标是否是信鸽或信纸内部 (虽然 stopPropagation 已处理，双重保险)
+        if (e.target.closest('#dove') || e.target.closest('#paper')) return;
 
         if(stage===STAGE.FIREWORKS){
           if (isProcessingClick) return;
@@ -559,10 +621,14 @@
             launchFirework(x, y, 1);
           }
         } else if(stage===STAGE.LOOP){
+          // 只有在信纸没打开时，点击屏幕才放烟花 (可选体验优化，这里允许背景放烟花)
+          // 如果 mask 显示中，handleClick 不会被触发，因为 mask 遮住了 canvas
           launchFirework(x, y);
         }
       }
 
+      // 绑定到 window 可能会捕获 mask 的点击，所以这里要注意
+      // mask 有 stopPropagation，所以点击 mask 不会触发这里的 handleClick
       window.addEventListener('click', handleClick, { passive:false });
       window.addEventListener('touchstart', handleClick, { passive:false });
 
